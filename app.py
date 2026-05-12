@@ -1,12 +1,26 @@
 import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
-import io
 
 # --- SAYFA AYARLARI ---
-st.set_page_config(page_title="Üretim Planlama Pro v2026", layout="wide")
-st.title("🏗️ Üretim Planlama ve Akıllı Hafıza Sistemi")
+st.set_page_config(page_title="Üretim Bulut v2026", layout="wide")
+st.title("☁️ Bulut Tabanlı Üretim Planlama (Paylaşımlı)")
+
+# --- GOOGLE SHEETS BAĞLANTISI ---
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+# Verileri Çekme Fonksiyonu
+def verileri_yukle():
+    try:
+        isler_df = conn.read(worksheet="Isler")
+        personel_df = conn.read(worksheet="Personeller")
+        return isler_df, personel_df
+    except:
+        return pd.DataFrame(), pd.DataFrame()
+
+df_isler, df_personel = verileri_yukle()
 
 # --- VERİ YAPILARI ---
 uretim_yapisi = {
@@ -26,136 +40,52 @@ personel_alan_yapisi = {
     "KALİTE": ["KALİTE OPERATÖRÜ"]
 }
 
-renkler = {
-    "KÖPRÜ": "#3498db", "BAŞLIK": "#e67e22", "KALDIRMA MAKİNASI": "#2ecc71", "ELEKTRİK": "#f1c40f", "FONKSİYON TESTİ": "#9b59b6"
-}
-
-# --- HAFIZA YÖNETİMİ ---
-if 'personel_listesi' not in st.session_state:
-    st.session_state.personel_listesi = []
-if 'planlanan_isler' not in st.session_state:
-    st.session_state.planlanan_isler = []
-
-# --- YARDIMCI FONKSİYONLAR ---
-def cakisma_var_mi(yeni_is):
-    for eski_is in st.session_state.planlanan_isler:
-        if yeni_is['Personel'] == eski_is['Personel']:
-            if not (yeni_is['Bitiş'] < eski_is['Başlangıç'] or yeni_is['Başlangıç'] > eski_is['Bitiş']):
-                return eski_is
-    return None
-
-# --- VERİ YÜKLEME / KAYDETME FONKSİYONLARI ---
-def veriyi_excele_donustur():
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        if st.session_state.planlanan_isler:
-            pd.DataFrame(st.session_state.planlanan_isler).to_sheet(writer, sheet_name='Isler', index=False)
-        if st.session_state.personel_listesi:
-            pd.DataFrame(st.session_state.personel_listesi).to_sheet(writer, sheet_name='Personeller', index=False)
-    return output.getvalue()
-
-# --- SOL PANEL: GİRİŞ ---
+# --- SOL PANEL ---
 with st.sidebar:
-    st.header("💾 Veri Yönetimi (Hafıza)")
+    st.header("📋 Yeni İş Emri")
+    is_no = st.text_input("İş Emri No")
+    musteri = st.text_input("Müşteri Adı")
+    baslik = st.selectbox("Üretim Başlığı", [""] + list(uretim_yapisi.keys()))
+    surec = st.selectbox("Üretim Süreci", uretim_yapisi.get(baslik, []))
     
-    # Dışa Aktar
-    if st.session_state.planlanan_isler or st.session_state.personel_listesi:
-        # Excel dosyasını basitçe oluşturma (Daha güvenli yöntem)
-        df_isler = pd.DataFrame(st.session_state.planlanan_isler)
-        df_personel = pd.DataFrame(st.session_state.personel_listesi)
-        
-        towrite = io.BytesIO()
-        with pd.ExcelWriter(towrite, engine='xlsxwriter') as writer:
-            df_isler.to_excel(writer, sheet_name='Isler', index=False)
-            df_personel.to_excel(writer, sheet_name='Personeller', index=False)
-        
-        st.download_button(label="📥 Tüm Verileri Excel'e Yedekle", 
-                          data=towrite.getvalue(),
-                          file_name=f"uretim_plan_yedek_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
-                          mime="application/vnd.ms-excel")
+    personel_listesi = df_personel["Ad Soyad"].tolist() if not df_personel.empty else []
+    secilen_personel = st.selectbox("Görevli Personel", ["Seçiniz"] + personel_listesi)
     
-    # İçe Aktar
-    yuklenen_dosya = st.file_uploader("📂 Yedek Dosyayı Yükle", type=["xlsx"])
-    if yuklenen_dosya:
-        if st.button("✅ Verileri Geri Yükle"):
-            try:
-                st.session_state.planlanan_isler = pd.read_excel(yuklenen_dosya, sheet_name='Isler').to_dict('records')
-                st.session_state.personel_listesi = pd.read_excel(yuklenen_dosya, sheet_name='Personeller').to_dict('records')
-                # Tarih sütunlarını tekrar datetime nesnesine çevir
-                for is_emri in st.session_state.planlanan_isler:
-                    is_emri['Başlangıç'] = pd.to_datetime(is_emri['Başlangıç'])
-                    is_emri['Bitiş'] = pd.to_datetime(is_emri['Bitiş'])
-                st.success("Veriler başarıyla yüklendi!")
-                st.rerun()
-            except Exception as e:
-                st.error("Dosya okunurken hata oluştu. Lütfen doğru yedeği seçin.")
+    baslangic = st.date_input("Başlangıç", value=datetime.now())
+    sure = st.number_input("Süre (Gün)", min_value=1, value=1)
 
-    st.divider()
-    st.header("📋 Yeni İş Girişi")
-    with st.expander("İş ve Üretim Detayları", expanded=True):
-        is_no = st.text_input("İş Emri No")
-        musteri = st.text_input("Müşteri Adı")
-        baslik = st.selectbox("Üretim Başlığı", [""] + list(uretim_yapisi.keys()))
-        surec = st.selectbox("Üretim Süreci", [""] + uretim_yapisi.get(baslik, []))
-        
-        personel_adlari = [p['ad'] for p in st.session_state.personel_listesi]
-        secilen_personel = st.selectbox("Görevli Personel", ["Seçiniz"] + personel_adlari)
-        baslangic = st.date_input("Başlangıç", value=datetime(2026, 5, 12))
-        sure = st.number_input("Süre (Gün)", min_value=1, value=1)
-
-    if st.button("🚀 Çizelgeye Ekle"):
-        if is_no and secilen_personel != "Seçiniz":
-            bitis = baslangic + timedelta(days=sure-1)
-            yeni_is = {
-                "İş No": is_no, "Müşteri": musteri, "Başlık": baslik, 
-                "Süreç": surec, "Personel": secilen_personel,
-                "Başlangıç": pd.to_datetime(baslangic), "Bitiş": pd.to_datetime(bitis),
-                "Renk": renkler.get(baslik, "#cccccc")
-            }
-            cakisma = cakisma_var_mi(yeni_is)
-            if cakisma:
-                st.error(f"⚠️ {secilen_personel} zaten dolu!")
-            else:
-                st.session_state.planlanan_isler.append(yeni_is)
-                st.success("Eklendi!")
-                st.rerun()
+    if st.button("Buluta Kaydet"):
+        yeni_veri = pd.DataFrame([{
+            "İş No": is_no, "Müşteri": musteri, "Başlık": baslik, 
+            "Süreç": surec, "Personel": secilen_personel,
+            "Başlangıç": baslangic.strftime('%Y-%m-%d'),
+            "Bitiş": (baslangic + timedelta(days=sure-1)).strftime('%Y-%m-%d')
+        }])
+        guncel_isler = pd.concat([df_isler, yeni_veri], ignore_index=True)
+        conn.update(worksheet="Isler", data=guncel_isler)
+        st.success("Veri Google Sheets'e gönderildi!")
+        st.rerun()
 
 # --- ANA EKRAN ---
-tab1, tab2, tab3 = st.tabs(["📊 Görsel Çizelge", "📑 İş Detayları", "👤 Personel"])
+tab1, tab2 = st.tabs(["📊 Üretim Takvimi", "👤 Personel Ekle"])
 
 with tab1:
-    if st.session_state.planlanan_isler:
-        df_gantt = pd.DataFrame(st.session_state.planlanan_isler)
-        fig = px.timeline(df_gantt, x_start="Başlangıç", x_end="Bitiş", y="Personel", 
-                          color="Başlık", color_discrete_map=renkler,
-                          title="2026 Üretim Takvimi")
-        fig.update_yaxes(autorange="reversed")
+    if not df_isler.empty:
+        df_isler["Başlangıç"] = pd.to_datetime(df_isler["Başlangıç"])
+        df_isler["Bitiş"] = pd.to_datetime(df_isler["Bitiş"])
+        fig = px.timeline(df_isler, x_start="Başlangıç", x_end="Bitiş", y="Personel", color="Başlık")
         st.plotly_chart(fig, use_container_width=True)
+        st.dataframe(df_isler) # Liste hali
     else:
-        st.info("Hafızadan veri yükleyin veya yeni iş ekleyin.")
+        st.info("Henüz kayıtlı iş yok.")
 
 with tab2:
-    if st.session_state.planlanan_isler:
-        for idx, row in enumerate(st.session_state.planlanan_isler):
-            c1, c2 = st.columns([9, 1])
-            c1.write(f"**{row['İş No']}** - {row['Müşteri']} ({row['Süreç']})")
-            if c2.button("Sil", key=f"del_{idx}"):
-                st.session_state.planlanan_isler.pop(idx)
-                st.rerun()
-
-with tab3:
-    p_col1, p_col2 = st.columns(2)
-    with p_col1:
-        p_ad = st.text_input("Ad Soyad")
-        p_alan = st.selectbox("Alan", list(personel_alan_yapisi.keys()))
-        p_gorev = st.selectbox("Görev", personel_alan_yapisi[p_alan])
-        if st.button("Personel Ekle"):
-            st.session_state.personel_listesi.append({"ad": p_ad, "alan": p_alan, "gorev": p_gorev})
-            st.rerun()
-    with p_col2:
-        for i, p in enumerate(st.session_state.personel_listesi):
-            c1, c2 = st.columns([4,1])
-            c1.text(f"{p['ad']} ({p['gorev']})")
-            if c2.button("❌", key=f"pdel_{i}"):
-                st.session_state.personel_listesi.pop(i)
-                st.rerun()
+    st.subheader("Yeni Personel Tanımla")
+    p_ad = st.text_input("Personel Ad Soyad")
+    p_alan = st.selectbox("Çalışma Alanı", list(personel_alan_yapisi.keys()))
+    if st.button("Personeli Kaydet"):
+        yeni_p = pd.DataFrame([{"Ad Soyad": p_ad, "Alan": p_alan}])
+        guncel_p = pd.concat([df_personel, yeni_p], ignore_index=True)
+        conn.update(worksheet="Personeller", data=guncel_p)
+        st.success("Personel listesi güncellendi!")
+        st.rerun()

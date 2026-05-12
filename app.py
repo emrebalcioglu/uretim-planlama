@@ -1,104 +1,102 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+from datetime import datetime
 
-# Sayfa Yapılandırması
-st.set_page_config(page_title="Üretim Planlama v1.0", layout="wide", initial_sidebar_state="expanded")
+# Sayfa Konfigürasyonu
+st.set_page_config(page_title="Üretim İş Emri Sistemi", layout="wide")
 
-st.title("🏭 Üretim Planlama ve Takip Sistemi")
+st.title("🏭 Üretim İş Emri ve Planlama")
 
-# --- BAĞLANTI ---
+# --- BAĞLANTI (Test ettiğimiz ve çalışan yöntem) ---
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # ttl=0 verinin her seferinde güncel gelmesini sağlar
     df = conn.read(ttl=0)
     
-    # Eğer tablo boşsa veya kolonlar yoksa başlıkları oluştur
+    # E-tablo boşsa başlıkları hazırla
     if df.empty:
-        df = pd.DataFrame(columns=["İş No", "Müşteri", "İş Başlığı", "Süreç", "Sorumlu", "Başlangıç", "Bitiş"])
+        df = pd.DataFrame(columns=["İş Emri No", "Müşteri", "İş Tanımı", "Miktar", "Süreç", "Sorumlu", "Teslim Tarihi"])
 
-    # --- SIDEBAR: YENİ İŞ GİRİŞİ ---
+    # --- SOL PANEL: İŞ EMRİ GİRİŞİ ---
     with st.sidebar:
-        st.header("📌 Yeni İş Ekle")
-        with st.form("yeni_is_formu", clear_on_submit=True):
-            is_no = st.text_input("İş No")
-            musteri = st.text_input("Müşteri")
-            baslik = st.text_input("Yapılacak İş")
+        st.header("📝 Yeni İş Emri Oluştur")
+        with st.form("is_emri_formu", clear_on_submit=True):
+            ie_no = st.text_input("İş Emri No", placeholder="Örn: IE-001")
+            musteri = st.text_input("Müşteri / Proje")
+            is_tanimi = st.text_area("İşin Detaylı Tanımı")
+            miktar = st.number_input("Adet / Miktar", min_value=1, step=1)
             
-            # Personel listesi (Bunu manuel ekledik, ileride Sheets'ten de çekebiliriz)
+            st.divider()
+            
+            # Operasyonel Detaylar
             personel_listesi = ["Emre Balcıoğlu", "Ahmet", "Mehmet", "Dış Tedarik"]
-            sorumlu = st.selectbox("Sorumlu Personel", personel_listesi)
+            sorumlu = st.selectbox("İşten Sorumlu Personel", personel_listesi)
             
-            surec_listesi = ["Beklemede", "Tasarım", "Kesim/Büküm", "Kaynak", "Boya", "Montaj", "Tamamlandı"]
-            surec = st.selectbox("Mevcut Süreç", surec_listesi)
+            surec_listesi = ["Beklemede", "Tasarım/Onay", "Ham Malzeme", "Üretim", "Boya/Kaplama", "Montaj", "Sevkiyata Hazır"]
+            surec = st.selectbox("İşin Mevcut Durumu", surec_listesi)
             
-            tarih = st.date_input("Başlangıç Tarihi")
+            teslim_tarihi = st.date_input("Planlanan Teslim Tarihi")
             
-            submit = st.form_submit_button("Sisteme Kaydet")
+            submit = st.form_submit_button("İş Emrini Kaydet")
 
             if submit:
-                if is_no and musteri:
-                    yeni_veri = pd.DataFrame([{
-                        "İş No": is_no,
+                if ie_no and musteri:
+                    yeni_kayit = pd.DataFrame([{
+                        "İş Emri No": ie_no,
                         "Müşteri": musteri,
-                        "İş Başlığı": baslik,
+                        "İş Tanımı": is_tanimi,
+                        "Miktar": miktar,
                         "Süreç": surec,
                         "Sorumlu": sorumlu,
-                        "Başlangıç": tarih.strftime("%d.%m.%Y"),
-                        "Bitiş": "-"
+                        "Teslim Tarihi": teslim_tarihi.strftime("%d.%m.%Y")
                     }])
                     
-                    # Veriyi mevcut tabloya ekle ve Google Sheets'i güncelle
-                    updated_df = pd.concat([df, yeni_veri], ignore_index=True)
-                    conn.update(data=updated_df)
-                    st.toast("İş başarıyla kaydedildi!", icon="✅")
+                    # Veriyi ekle ve Google Sheets'i güncelle
+                    guncel_df = pd.concat([df, yeni_kayit], ignore_index=True)
+                    conn.update(data=guncel_df)
+                    st.toast(f"{ie_no} Nolu İş Emri Kaydedildi!", icon="🚀")
                     st.rerun()
                 else:
-                    st.error("Lütfen İş No ve Müşteri alanlarını doldurun.")
+                    st.error("Lütfen 'İş Emri No' ve 'Müşteri' alanlarını boş bırakmayın.")
 
-    # --- ANA PANEL: ÖZET VE TABLO ---
-    # Üst Bilgi Kartları
-    toplam_is = len(df)
-    devam_eden = len(df[df["Süreç"] != "Tamamlandı"])
-    tamamlanan = len(df[df["Süreç"] == "Tamamlandı"])
+    # --- ANA EKRAN: OPERASYONEL TAKİP ---
     
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Toplam İş", toplam_is)
-    c2.metric("Devam Eden", devam_eden)
-    c3.metric("Tamamlanan", tamamlanan)
+    # Üst Özet Kartları
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Aktif İş Emirleri", len(df[df["Süreç"] != "Sevkiyata Hazır"]))
+    c2.metric("Üretim Aşamasında", len(df[df["Süreç"] == "Üretim"]))
+    c3.metric("Bekleyen İşler", len(df[df["Süreç"] == "Beklemede"]))
+    c4.metric("Tamamlanan", len(df[df["Süreç"] == "Sevkiyata Hazır"]))
 
-    st.divider()
-
-    # Filtreleme Seçenekleri
-    st.subheader("📋 Üretim Çizelgesi")
+    st.subheader("📋 Üretim Çizelgesi ve İş Takibi")
     
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        f_personel = st.multiselect("Personele Göre Filtrele", options=df["Sorumlu"].unique())
-    with col_f2:
-        f_surec = st.multiselect("Sürece Göre Filtrele", options=df["Süreç"].unique())
+    # Tablo Filtreleme
+    col_search, col_filter = st.columns([2, 1])
+    with col_search:
+        search_query = st.text_input("🔍 İş Emri veya Müşteri Ara...")
+    with col_filter:
+        filter_status = st.multiselect("Duruma Göre Filtrele", options=surec_listesi)
 
-    # Filtreleri Uygula
-    filtered_df = df.copy()
-    if f_personel:
-        filtered_df = filtered_df[filtered_df["Sorumlu"].isin(f_personel)]
-    if f_surec:
-        filtered_df = filtered_df[filtered_df["Süreç"].isin(f_surec)]
+    # Veriyi Filtrele
+    view_df = df.copy()
+    if search_query:
+        view_df = view_df[view_df.apply(lambda row: search_query.lower() in row.astype(str).str.lower().values, axis=1)]
+    if filter_status:
+        view_df = view_df[view_df["Süreç"].isin(filter_status)]
 
-    # Tabloyu Göster
+    # Tabloyu şık bir şekilde göster
     st.dataframe(
-        filtered_df, 
-        use_container_width=True, 
+        view_df,
+        use_container_width=True,
         hide_index=True,
         column_config={
-            "Süreç": st.column_config.SelectboxColumn(
-                "Süreç",
-                options=surec_listesi,
-                required=True,
-            )
+            "İş Emri No": st.column_config.TextColumn("İş Emri No", help="Benzersiz iş emri numarası"),
+            "Süreç": st.column_config.SelectboxColumn("Süreç", options=surec_listesi),
+            "Miktar": st.column_config.NumberColumn("Miktar", format="%d Adet"),
+            "Teslim Tarihi": st.column_config.TextColumn("📅 Teslim Tarihi")
         }
     )
 
 except Exception as e:
-    st.error(f"Bağlantı hatası: {e}")
-    st.info("Eğer 'Bağlantı başarılı' yazısını gördüysen ama bu hatayı alıyorsan, Google Sheets'teki sütun isimlerini kontrol et.")
+    st.error(f"Sistem Hatası: {e}")
+    st.info("Bağlantı sağlandı ancak veri okuma/yazma hatası oluştu. Lütfen Google Sheets yapısını kontrol et.")
